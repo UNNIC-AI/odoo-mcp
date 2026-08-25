@@ -1,9 +1,11 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
 const DEFAULT_ATTRIBUTES = ["string", "type", "required", "readonly", "relation"];
 
-export const getFieldsTool = {
+export const getFieldsTool: ToolDefinition = {
   name: "get_fields",
   description:
     "Get field definitions for an Odoo model. Returns field names, types, labels, and other metadata. Default: returns string, type, required, readonly, relation only (compact mode).",
@@ -25,15 +27,16 @@ export const getFieldsTool = {
       .boolean()
       .optional()
       .describe(
-        "true로 설정하면 모든 속성을 반환합니다 (응답이 매우 클 수 있음). Default: false"
+        "If true, return every field attribute. The response can be very large. Default: false"
       ),
   },
 };
 
 export async function handleGetFields(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   const allAttributes = (args.all_attributes as boolean) ?? false;
   const attributes = args.attributes
@@ -47,7 +50,7 @@ export async function handleGetFields(
     unknown
   >;
 
-  // 필드명 필터링
+  // Filtrado por nombre de campo.
   const filter = args.filter as string | undefined;
   let filtered = fields;
   if (filter) {

@@ -1,8 +1,10 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import { isModelAllowed, OPEN_POLICY, type AccessPolicy } from "../access.js";
 
-export const listAttachmentsTool = {
+export const listAttachmentsTool: ToolDefinition = {
   name: "list_attachments",
   description:
     "List file attachments on a specific Odoo record or search all attachments.",
@@ -32,12 +34,36 @@ export const listAttachmentsTool = {
 
 export async function handleListAttachments(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
-  const model = args.model as string | undefined;
+  args: Record<string, unknown>,
+  policy: AccessPolicy = OPEN_POLICY
+): Promise<ToolResult> {
+  // Un `model` en blanco equivale a no haberlo pasado; si no lo normalizamos
+  // aquí serviría para esquivar la comprobación de la lista blanca.
+  const model = (args.model as string | undefined)?.trim() || undefined;
   const resId = args.res_id as number | undefined;
   const rawLimit = (args.limit as number) ?? 20;
   const limit = Math.min(Math.max(1, rawLimit), 200);
+
+  // Sin `model` la búsqueda abarcaría adjuntos de cualquier modelo, lo que
+  // saltaría la lista blanca. Con lista blanca activa, `model` es obligatorio.
+  if (policy.allowedModels && !model) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              error:
+                "'model' is required: this server restricts which models can be accessed, so attachments cannot be listed across all models.",
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
 
   let extraDomain: OdooDomain = [];
   if (args.domain) {
@@ -45,14 +71,14 @@ export async function handleListAttachments(
       const parsed = JSON.parse(args.domain as string);
       if (!Array.isArray(parsed)) {
         return {
-          content: [{ type: "text" as const, text: JSON.stringify({ error: "domain은 JSON 배열이어야 합니다" }, null, 2) }],
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "'domain' must be a JSON array." }, null, 2) }],
           isError: true,
         };
       }
       extraDomain = parsed as OdooDomain;
     } catch {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "domain JSON 파싱 실패. 올바른 JSON 배열을 입력하세요" }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Could not parse 'domain'. It must be a valid JSON array." }, null, 2) }],
         isError: true,
       };
     }
@@ -94,7 +120,7 @@ export async function handleListAttachments(
   };
 }
 
-export const uploadAttachmentTool = {
+export const uploadAttachmentTool: ToolDefinition = {
   name: "upload_attachment",
   description:
     "Upload a file attachment to an Odoo record. File content must be base64-encoded.",
@@ -115,52 +141,53 @@ export const uploadAttachmentTool = {
   },
 };
 
-// 순수 base64 문자만 허용 (whitespace 제거 후), padding은 최대 2개
+// Solo caracteres base64 (tras quitar espacios); como mucho 2 de relleno.
 const BASE64_REGEX = /^[A-Za-z0-9+/]*={0,2}$/;
 
-// 업로드 허용 최대 크기: 25MB (base64 인코딩 시 ~33.8MB)
+// Tamaño máximo de subida: 25 MB (~33,8 MB ya codificados en base64).
 const MAX_UPLOAD_SIZE_MB = 25;
 const MAX_UPLOAD_BASE64_CHARS = Math.ceil(MAX_UPLOAD_SIZE_MB * 1024 * 1024 * (4 / 3));
 
-// 파일명 보안 검증: 경로 순회 및 위험 문자 차단
+// Validación del nombre: bloquea path traversal y caracteres peligrosos.
 const UNSAFE_FILENAME_REGEX = /[/\\:*?"<>|]/;
 
 export async function handleUploadAttachment(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const name = args.name as string;
   const data = args.data as string;
 
-  // 파일명 검증
+  // Validación del nombre de fichero.
   if (!name || name.trim() === "") {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "파일명이 비어 있습니다" }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "The file name is empty." }, null, 2) }],
       isError: true,
     };
   }
   if (UNSAFE_FILENAME_REGEX.test(name) || name.includes("..")) {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "파일명에 허용되지 않는 문자가 포함되어 있습니다 (/, \\, .., :, *, ?, \", <, >, | 불가)" }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "The file name contains characters that are not allowed: / \\ .. : * ? \" < > |" }, null, 2) }],
       isError: true,
     };
   }
 
-  // base64 정규화: whitespace 제거
+  // Normalizamos el base64 quitando espacios en blanco.
   const cleanData = data.replace(/\s/g, "");
 
-  // 크기 제한 검증
+  // Límite de tamaño.
   if (cleanData.length > MAX_UPLOAD_BASE64_CHARS) {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: `파일이 너무 큽니다. 최대 ${MAX_UPLOAD_SIZE_MB}MB까지 업로드 가능합니다` }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: `File is too large. The maximum upload size is ${MAX_UPLOAD_SIZE_MB} MB.` }, null, 2) }],
       isError: true,
     };
   }
 
-  // base64 유효성 검증
+  // Validez del base64.
   if (!BASE64_REGEX.test(cleanData)) {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "유효하지 않은 base64 데이터입니다" }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "'data' is not valid base64." }, null, 2) }],
       isError: true,
     };
   }
@@ -192,7 +219,7 @@ export async function handleUploadAttachment(
   };
 }
 
-export const downloadAttachmentTool = {
+export const downloadAttachmentTool: ToolDefinition = {
   name: "download_attachment",
   description:
     "Download/read an attachment by ID. Returns the base64-encoded file content.",
@@ -206,15 +233,18 @@ const MAX_DOWNLOAD_SIZE_BYTES = MAX_DOWNLOAD_SIZE_MB * 1024 * 1024;
 
 export async function handleDownloadAttachment(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  policy: AccessPolicy = OPEN_POLICY
+): Promise<ToolResult> {
   const id = args.id as number;
 
-  // 먼저 메타데이터만 조회하여 파일 크기 확인
+  // Primero solo los metadatos: nos dan el tamaño y el modelo al que pertenece
+  // el adjunto, que es lo que la lista blanca necesita comprobar.
   const metaRecords = (await client.read("ir.attachment", [id], [
     "name",
     "mimetype",
     "file_size",
+    "res_model",
   ])) as Record<string, unknown>[];
 
   if (!metaRecords || metaRecords.length === 0) {
@@ -222,7 +252,7 @@ export async function handleDownloadAttachment(
       content: [
         {
           type: "text" as const,
-          text: JSON.stringify({ error: `첨부파일 ID ${id}를 찾을 수 없습니다` }, null, 2),
+          text: JSON.stringify({ error: `No attachment found with ID ${id}.` }, null, 2),
         },
       ],
       isError: true,
@@ -232,6 +262,25 @@ export async function handleDownloadAttachment(
   const meta = metaRecords[0];
   const fileSize = meta.file_size as number;
 
+  const resModel = meta.res_model;
+  if (typeof resModel === "string" && !isModelAllowed(policy, resModel)) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              error: `Attachment ${id} belongs to model '${resModel}', which is not allowed by this server's configuration.`,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
+
   if (fileSize > MAX_DOWNLOAD_SIZE_BYTES) {
     return {
       content: [
@@ -239,7 +288,7 @@ export async function handleDownloadAttachment(
           type: "text" as const,
           text: JSON.stringify(
             {
-              error: `파일이 너무 큽니다 (${(fileSize / 1024 / 1024).toFixed(1)}MB). 최대 ${MAX_DOWNLOAD_SIZE_MB}MB까지 다운로드 가능합니다`,
+              error: `Attachment is too large (${(fileSize / 1024 / 1024).toFixed(1)} MB). The maximum download size is ${MAX_DOWNLOAD_SIZE_MB} MB.`,
               id,
               name: meta.name,
               mimetype: meta.mimetype,
@@ -254,7 +303,7 @@ export async function handleDownloadAttachment(
     };
   }
 
-  // 크기 확인 후 실제 데이터 조회
+  // Confirmado el tamaño, ya pedimos el contenido.
   const records = (await client.read("ir.attachment", [id], [
     "name",
     "mimetype",
@@ -267,7 +316,7 @@ export async function handleDownloadAttachment(
       content: [
         {
           type: "text" as const,
-          text: JSON.stringify({ error: `첨부파일 ID ${id}를 찾을 수 없습니다` }, null, 2),
+          text: JSON.stringify({ error: `No attachment found with ID ${id}.` }, null, 2),
         },
       ],
       isError: true,

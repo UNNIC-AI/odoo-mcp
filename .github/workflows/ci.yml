@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  # Las pruebas de integración levantan un Odoo real. Tardan varios minutos, así
+  # que no bloquean cada push: se ejecutan en main y bajo demanda.
+  integration:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: odoo
+          POSTGRES_PASSWORD: odoo
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd "pg_isready -U odoo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      odoo:
+        image: odoo:18
+        env:
+          HOST: db
+          USER: odoo
+          PASSWORD: odoo
+        ports:
+          - 8069:8069
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Esperar a que Odoo responda
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8069/web/database/selector > /dev/null; then
+              echo "Odoo responde"; exit 0
+            fi
+            sleep 5
+          done
+          echo "Odoo no arrancó a tiempo"; exit 1
+      - name: Inicializar la base de datos de pruebas
+        run: |
+          curl -sf -X POST http://localhost:8069/web/database/create \
+            -F 'master_pwd=admin' -F 'name=odoo_test' -F 'login=admin' \
+            -F 'password=admin' -F 'lang=en_US' -F 'country_code=' \
+            -F 'phone=' -F 'demo=1' > /dev/null
+      - run: npm run test:integration
+        env:
+          ODOO_URL: http://localhost:8069
+          ODOO_DB: odoo_test
+          ODOO_USER: admin
+          ODOO_PASSWORD: admin

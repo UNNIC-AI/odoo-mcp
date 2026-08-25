@@ -1,123 +1,51 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { OdooClient } from "./odoo-client.js";
+import { OdooClient, AuthenticationError } from "./odoo-client.js";
+import { ConfigError, describeConfig, loadConfig } from "./config.js";
+import { policyFromConfig } from "./access.js";
+import { createServer } from "./server.js";
 
-import { searchRecordsTool, handleSearchRecords } from "./tools/search.js";
-import { readRecordTool, handleReadRecord } from "./tools/read.js";
-import { createRecordTool, handleCreateRecord } from "./tools/create.js";
-import { updateRecordTool, handleUpdateRecord } from "./tools/update.js";
-import { deleteRecordTool, handleDeleteRecord } from "./tools/delete.js";
-import { countRecordsTool, handleCountRecords } from "./tools/count.js";
-import { listModelsTool, handleListModels } from "./tools/models.js";
-import { getFieldsTool, handleGetFields } from "./tools/fields.js";
-import { searchGroupedTool, handleSearchGrouped } from "./tools/group.js";
-import { executeMethodTool, handleExecuteMethod } from "./tools/execute.js";
-import { nameSearchTool, handleNameSearch } from "./tools/name-search.js";
-import { getMessagesTool, handleGetMessages, postMessageTool, handlePostMessage } from "./tools/message.js";
-import {
-  listAttachmentsTool, handleListAttachments,
-  uploadAttachmentTool, handleUploadAttachment,
-  downloadAttachmentTool, handleDownloadAttachment,
-} from "./tools/attachment.js";
-import { searchCalendarTool, handleSearchCalendar } from "./tools/calendar.js";
-import { whoamiTool, handleWhoami } from "./tools/whoami.js";
+const VERSION = "0.1.0";
 
+/**
+ * Este servidor es de un solo usuario: cada persona lo ejecuta en su propio
+ * cliente de IA con sus propias credenciales de Odoo, mediante stdio. Los
+ * permisos efectivos son los del usuario de Odoo configurado, así que no hay
+ * ninguna capa de autorización adicional que mantener aquí.
+ */
 async function main() {
-  const url = process.env.ODOO_URL;
-  const db = process.env.ODOO_DB;
-  const apiKey = process.env.ODOO_API_KEY;
-  const user = process.env.ODOO_USER;
-  const password = process.env.ODOO_PASSWORD;
-
-  let timeout: number | undefined;
-  if (process.env.ODOO_TIMEOUT) {
-    const parsed = Number(process.env.ODOO_TIMEOUT.trim());
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      console.error(
-        "ODOO_TIMEOUT must be a positive integer (seconds). Got:",
-        process.env.ODOO_TIMEOUT
-      );
+  let config;
+  try {
+    config = loadConfig();
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      console.error(`Error de configuración: ${err.message}`);
       process.exit(1);
     }
-    timeout = parsed * 1000;
+    throw err;
   }
 
-  if (!url || !db) {
-    console.error("ODOO_URL and ODOO_DB environment variables are required.");
-    process.exit(1);
-  }
+  console.error(describeConfig(config));
 
-  if (!apiKey && !(user && password)) {
-    console.error(
-      "Either ODOO_API_KEY or both ODOO_USER and ODOO_PASSWORD are required."
-    );
-    process.exit(1);
-  }
-
-  const odoo = new OdooClient({ url, db, apiKey, user, password }, timeout);
+  const odoo = new OdooClient(config);
 
   try {
     await odoo.connect();
   } catch (err) {
-    console.error("Failed to connect to Odoo:", (err as Error).message);
+    if (err instanceof AuthenticationError) {
+      console.error(`Error de autenticación: ${err.message}`);
+    } else {
+      console.error(
+        `No se pudo conectar con Odoo en ${config.url}: ${(err as Error).message}`
+      );
+    }
     process.exit(1);
   }
 
-  const server = new McpServer({
-    name: "odoo-mcp",
-    version: "0.1.0",
-  });
-
-  // Register tools
-  const tools = [
-    { def: searchRecordsTool, handler: handleSearchRecords },
-    { def: readRecordTool, handler: handleReadRecord },
-    { def: createRecordTool, handler: handleCreateRecord },
-    { def: updateRecordTool, handler: handleUpdateRecord },
-    { def: deleteRecordTool, handler: handleDeleteRecord },
-    { def: countRecordsTool, handler: handleCountRecords },
-    { def: listModelsTool, handler: handleListModels },
-    { def: getFieldsTool, handler: handleGetFields },
-    { def: searchGroupedTool, handler: handleSearchGrouped },
-    { def: executeMethodTool, handler: handleExecuteMethod },
-    { def: nameSearchTool, handler: handleNameSearch },
-    { def: getMessagesTool, handler: handleGetMessages },
-    { def: postMessageTool, handler: handlePostMessage },
-    { def: listAttachmentsTool, handler: handleListAttachments },
-    { def: uploadAttachmentTool, handler: handleUploadAttachment },
-    { def: downloadAttachmentTool, handler: handleDownloadAttachment },
-    { def: searchCalendarTool, handler: handleSearchCalendar },
-    { def: whoamiTool, handler: handleWhoami },
-  ];
-
-  for (const { def, handler } of tools) {
-    server.tool(def.name, def.description, def.inputSchema, async (args: Record<string, unknown>) => {
-      try {
-        return await handler(odoo, args as Record<string, unknown>);
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                { error: (err as Error).message },
-                null,
-                2
-              ),
-            },
-          ],
-          isError: true,
-        };
-      }
-    });
-  }
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const server = createServer(odoo, policyFromConfig(config), VERSION);
+  await server.connect(new StdioServerTransport());
 }
 
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  console.error("Error irrecuperable:", err);
   process.exit(1);
 });
-

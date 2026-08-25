@@ -1,8 +1,10 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
-export const searchGroupedTool = {
+export const searchGroupedTool: ToolDefinition = {
   name: "search_grouped",
   description:
     "Search and aggregate records using Odoo's read_group. Returns grouped results with aggregated values (sum, count, avg, etc.).",
@@ -40,8 +42,9 @@ export const searchGroupedTool = {
 
 export async function handleSearchGrouped(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
 
   let domain: unknown[] = [];
@@ -51,13 +54,13 @@ export async function handleSearchGrouped(
       parsed = JSON.parse(args.domain as string);
     } catch {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "domain JSON 파싱 실패. 올바른 JSON 배열을 입력하세요" }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Could not parse 'domain'. It must be a valid JSON array." }, null, 2) }],
         isError: true,
       };
     }
     if (!Array.isArray(parsed)) {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: 'domain은 JSON 배열이어야 합니다 (예: [["state","=","sale"]])' }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "'domain' must be a JSON array, for example [[\"state\",\"=\",\"sale\"]]." }, null, 2) }],
         isError: true,
       };
     }
@@ -71,7 +74,7 @@ export async function handleSearchGrouped(
 
   if (fields.length === 0) {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "fields가 비어있습니다. 집계할 필드를 지정하세요 (예: 'amount_total:sum,name')" }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "'fields' is empty. Specify the fields to aggregate, for example 'amount_total:sum,name'." }, null, 2) }],
       isError: true,
     };
   }
@@ -83,7 +86,7 @@ export async function handleSearchGrouped(
 
   if (groupby.length === 0) {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "groupby가 비어있습니다. 그룹핑할 필드를 지정하세요 (예: 'partner_id,state')" }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "'groupby' is empty. Specify the fields to group by, for example 'partner_id,state'." }, null, 2) }],
       isError: true,
     };
   }
@@ -110,7 +113,7 @@ export async function handleSearchGrouped(
           {
             model,
             group_count: result.length,
-            ...(result.length === 0 ? { message: "조건에 맞는 그룹이 없습니다" } : {}),
+            ...(result.length === 0 ? { message: "No groups matched the domain." } : {}),
             groups: result,
           },
           null,

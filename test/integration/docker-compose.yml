@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  odoo:
+    image: odoo:18
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8069:8069"
+    environment:
+      HOST: db
+      USER: odoo
+      PASSWORD: odoo
+    # Instalamos los módulos que tocan las herramientas: mail para el chatter,
+    # calendar para search_calendar y sale_management para tener pedidos y
+    # contactos de demostración con los que probar de verdad.
+    command: >
+      odoo -d odoo_test -i base,mail,calendar,sale_management
+      --db_host=db --db_user=odoo --db_password=odoo
+      --http-port=8069

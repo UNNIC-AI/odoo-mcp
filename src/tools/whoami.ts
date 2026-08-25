@@ -1,20 +1,41 @@
 import type { OdooClient } from "../odoo-client.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
-export const whoamiTool = {
+export const whoamiTool: ToolDefinition = {
   name: "whoami",
   description:
     "Show current connection info: authenticated user, uid, partner, company, server version, and database name.",
   inputSchema: {},
 };
 
+/**
+ * El campo de grupos de res.users cambió de nombre entre versiones de Odoo
+ * (`groups_id` en las clásicas, `group_ids` en las recientes). Pedir el que no
+ * existe hace fallar toda la llamada, así que preguntamos primero.
+ */
+async function resolveGroupsField(client: OdooClient): Promise<string | null> {
+  const fields = (await client.getFields("res.users", ["type"])) as Record<
+    string,
+    unknown
+  >;
+  for (const candidate of ["group_ids", "groups_id"]) {
+    if (candidate in fields) return candidate;
+  }
+  return null;
+}
+
 export async function handleWhoami(
   client: OdooClient,
-  _args: Record<string, unknown>
-) {
-  // 서버 버전 조회
+  _args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
+  // Versión del servidor.
   const version = await client.getVersion();
 
-  // 현재 사용자 정보 조회
+  const groupsField = await resolveGroupsField(client);
+
+  // Datos del usuario autenticado.
   const uid = client.getUid();
   const users = (await client.searchRead(
     "res.users",
@@ -26,7 +47,7 @@ export async function handleWhoami(
       "partner_id",
       "company_id",
       "company_ids",
-      "group_ids",
+      ...(groupsField ? [groupsField] : []),
       "lang",
       "tz",
     ],
@@ -47,8 +68,9 @@ export async function handleWhoami(
 
   const user = users[0] as Record<string, unknown>;
 
-  // 권한 그룹 이름 조회 — 앱 수준 그룹만 (full_name에 "/"가 포함된 것 = 앱/역할 그룹)
-  const groupIds = (user.group_ids as number[]) || [];
+  // Grupos de permisos: solo los de nivel aplicación/rol, que son los que
+  // llevan " / " en full_name. Los técnicos internos se descartan.
+  const groupIds = groupsField ? ((user[groupsField] as number[]) ?? []) : [];
   let groups: string[] = [];
   if (groupIds.length > 0) {
     const groupRecords = (await client.searchRead(
@@ -59,7 +81,7 @@ export async function handleWhoami(
     )) as Array<Record<string, unknown>>;
     groups = groupRecords
       .map((g) => g.full_name as string)
-      .filter((name) => name.includes(" / "))  // 앱/역할 그룹만 (내부 기술 그룹 제외)
+      .filter((name) => name.includes(" / "))
       .sort();
   }
 

@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
-export const nameSearchTool = {
+export const nameSearchTool: ToolDefinition = {
   name: "name_search",
   description:
     "Search records by name with autocomplete-style matching. Returns [id, display_name] pairs. Useful for finding records by partial name before creating relational links.",
@@ -32,8 +34,9 @@ export const nameSearchTool = {
 
 export async function handleNameSearch(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   const name = (args.name as string) || "";
   const operator = (args.operator as string) || "ilike";
@@ -46,13 +49,13 @@ export async function handleNameSearch(
       parsed = JSON.parse(args.domain as string);
     } catch {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "domain JSON 파싱 실패. 올바른 JSON 배열을 입력하세요" }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Could not parse 'domain'. It must be a valid JSON array." }, null, 2) }],
         isError: true,
       };
     }
     if (!Array.isArray(parsed)) {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "domain은 JSON 배열이어야 합니다 (예: [[\"is_company\",\"=\",true]])" }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "'domain' must be a JSON array, for example [[\"is_company\",\"=\",true]]." }, null, 2) }],
         isError: true,
       };
     }
@@ -63,7 +66,7 @@ export async function handleNameSearch(
 
   if (!Array.isArray(result)) {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "예상치 못한 응답 형식", raw: result }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "Unexpected response shape from name_search.", raw: result }, null, 2) }],
       isError: true,
     };
   }

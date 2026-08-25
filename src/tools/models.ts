@@ -1,8 +1,10 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import { isModelAllowed, OPEN_POLICY, type AccessPolicy } from "../access.js";
 
-export const listModelsTool = {
+export const listModelsTool: ToolDefinition = {
   name: "list_models",
   description:
     "List available Odoo models. By default excludes transient (wizard) models. Use filter to narrow results.",
@@ -24,12 +26,13 @@ export const listModelsTool = {
 
 export async function handleListModels(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  policy: AccessPolicy = OPEN_POLICY
+): Promise<ToolResult> {
   const filter = args.filter as string | undefined;
   const includeTransient = (args.include_transient as boolean) ?? false;
 
-  // 서버사이드 필터링 domain 구성
+  // Construimos el domain para que Odoo filtre en servidor.
   const domain: OdooDomain = [];
   if (!includeTransient) {
     domain.push(["transient", "=", false]);
@@ -49,18 +52,32 @@ export async function handleListModels(
     "model"
   )) as Array<Record<string, unknown>>;
 
-  const models = records.map((r) => ({
-    model: r.model,
-    name: r.name,
-    state: r.state,
-    transient: r.transient,
-  }));
+  // Nunca anunciamos modelos que la lista blanca no permite tocar: si el
+  // modelo no puede usarlos, verlos aquí solo provoca llamadas fallidas.
+  const models = records
+    .filter((r) => isModelAllowed(policy, r.model as string))
+    .map((r) => ({
+      model: r.model,
+      name: r.name,
+      state: r.state,
+      transient: r.transient,
+    }));
 
   return {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify({ count: models.length, models }, null, 2),
+        text: JSON.stringify(
+          {
+            count: models.length,
+            ...(policy.allowedModels
+              ? { notice: "Restricted to the models this server is configured to allow." }
+              : {}),
+            models,
+          },
+          null,
+          2
+        ),
       },
     ],
   };

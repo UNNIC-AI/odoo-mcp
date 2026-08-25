@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
-export const deleteRecordTool = {
+export const deleteRecordTool: ToolDefinition = {
   name: "delete_record",
   description:
     "Delete one or more records from an Odoo model. Use with caution — this is permanent.",
@@ -13,8 +15,9 @@ export const deleteRecordTool = {
 
 export async function handleDeleteRecord(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   const rawIds = (args.ids as string).split(",").map((id) => id.trim());
   const ids = rawIds.map((id) => {

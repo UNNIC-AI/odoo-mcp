@@ -1,10 +1,12 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
 const DEFAULT_FIELDS = ["id", "name", "display_name"];
 
-export const searchRecordsTool = {
+export const searchRecordsTool: ToolDefinition = {
   name: "search_records",
   description:
     "Search and read records from an Odoo model. If fields is not specified, only id/name/display_name are returned to keep response compact. Always specify the fields you need.",
@@ -31,14 +33,17 @@ export const searchRecordsTool = {
     include_total: z
       .boolean()
       .optional()
-      .describe("true이면 정확한 총 레코드 수(total_count)를 반환. 추가 RPC 호출 발생. 기본값: false"),
+      .describe(
+        "If true, also return the exact total record count as total_count. Costs one extra RPC call. Default: false"
+      ),
   },
 };
 
 export async function handleSearchRecords(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   let domain: OdooDomain = [];
   if (args.domain) {
@@ -46,7 +51,7 @@ export async function handleSearchRecords(
       domain = JSON.parse(args.domain as string);
     } catch {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "domain JSON 파싱 실패. 올바른 JSON 배열을 입력하세요" }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Could not parse 'domain'. It must be a valid JSON array." }, null, 2) }],
         isError: true,
       };
     }
@@ -66,7 +71,7 @@ export async function handleSearchRecords(
   let totalCount: number | undefined;
 
   if (includeTotal) {
-    // include_total=true: searchRead + count 병렬 호출
+    // include_total=true: searchRead y count en paralelo.
     const [searchResult, countResult] = await Promise.all([
       client.searchRead(model, domain, fields, limit, offset, order),
       client.count(model, domain),
@@ -75,7 +80,8 @@ export async function handleSearchRecords(
     totalCount = countResult;
     hasMore = offset + records.length < totalCount;
   } else {
-    // include_total=false: limit+1 트릭으로 has_more 판단 (count RPC 호출 제거)
+    // include_total=false: pedimos limit+1 para deducir has_more sin gastar
+    // una llamada RPC extra a count.
     records = (await client.searchRead(model, domain, fields, limit + 1, offset, order)) as unknown[];
     hasMore = records.length > limit;
     if (hasMore) records.pop();
@@ -91,7 +97,12 @@ export async function handleSearchRecords(
           offset,
           limit,
           has_more: hasMore,
-          ...(!fieldsSpecified ? { notice: "fields 미지정 — 기본 필드(id,name,display_name)만 반환됨. 필요한 필드를 지정하세요" } : {}),
+          ...(!fieldsSpecified
+            ? {
+                notice:
+                  "'fields' was not specified, so only id, name and display_name were returned. Specify the fields you need.",
+              }
+            : {}),
           records,
         }, null, 2),
       },

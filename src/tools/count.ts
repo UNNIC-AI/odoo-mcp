@@ -1,8 +1,10 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
-export const countRecordsTool = {
+export const countRecordsTool: ToolDefinition = {
   name: "count_records",
   description: "Count records in an Odoo model matching an optional domain filter.",
   inputSchema: {
@@ -18,8 +20,9 @@ export const countRecordsTool = {
 
 export async function handleCountRecords(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   let domain: OdooDomain = [];
   if (args.domain) {
@@ -27,7 +30,7 @@ export async function handleCountRecords(
       domain = JSON.parse(args.domain as string);
     } catch {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "domain JSON 파싱 실패. 올바른 JSON 배열을 입력하세요" }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Could not parse 'domain'. It must be a valid JSON array." }, null, 2) }],
         isError: true,
       };
     }

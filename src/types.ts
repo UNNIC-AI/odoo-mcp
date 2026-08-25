@@ -5,14 +5,6 @@ export interface OdooConfig {
   password: string; // API key or user password
 }
 
-export interface OdooConnectionParams {
-  url: string;
-  db: string;
-  apiKey?: string;
-  user?: string;
-  password?: string;
-}
-
 export type OdooDomain = Array<string | [string, string, unknown]>;
 
 export interface SearchParams {

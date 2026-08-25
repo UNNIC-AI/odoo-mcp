@@ -1,9 +1,6 @@
 import xmlrpc from "xmlrpc";
-import type {
-  OdooConfig,
-  OdooConnectionParams,
-  OdooDomain,
-} from "./types.js";
+import type { Config } from "./config.js";
+import type { OdooConfig, OdooDomain } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
@@ -44,17 +41,23 @@ function call(
   });
 }
 
+/**
+ * Error de autenticación. Su mensaje lo lee el usuario al arrancar el
+ * servidor, por eso está en español.
+ */
+export class AuthenticationError extends Error {}
+
 export class OdooClient {
   private config: OdooConfig | null = null;
-  private params: OdooConnectionParams;
+  private params: Config;
   private timeoutMs: number;
   private objectClient: xmlrpc.Client | null = null;
   private commonClient: xmlrpc.Client | null = null;
   private _partnerId: number | null = null;
 
-  constructor(params: OdooConnectionParams, timeoutMs?: number) {
+  constructor(params: Config) {
     this.params = params;
-    this.timeoutMs = timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   get uid(): number {
@@ -68,60 +71,42 @@ export class OdooClient {
     if (users.length > 0 && Array.isArray(users[0].partner_id)) {
       this._partnerId = users[0].partner_id[0] as number;
     } else {
-      throw new Error("현재 사용자의 partner_id를 조회할 수 없습니다");
+      throw new Error("Could not read partner_id for the current user.");
     }
     return this._partnerId;
   }
 
   async connect(): Promise<void> {
-    const { url, db, apiKey, user, password } = this.params;
+    const { url, db, user, secret, usingApiKey } = this.params;
 
-    // commonClient 캐싱
+    // Reutilizamos el cliente "common" entre reconexiones.
     if (!this.commonClient) {
       this.commonClient = createClient(url, "/xmlrpc/2/common");
     }
 
-    if (apiKey) {
-      // With API key, we need to authenticate to get the uid
-      const uid = (await call(this.commonClient, "authenticate", [
-        db,
-        user || "",
-        apiKey,
-        {},
-      ], this.timeoutMs)) as number;
+    // Odoo espera el login en el segundo argumento y la credencial en el
+    // tercero, sea contraseña o API key. Nunca se autentica sin login.
+    const uid = (await call(this.commonClient, "authenticate", [
+      db,
+      user,
+      secret,
+      {},
+    ], this.timeoutMs)) as number | false;
 
-      if (!uid) {
-        throw new Error(
-          "Authentication failed. Check your ODOO_URL, ODOO_DB, and ODOO_API_KEY."
-        );
-      }
-
-      this.config = { url, db, uid, password: apiKey };
-    } else if (user && password) {
-      const uid = (await call(this.commonClient, "authenticate", [
-        db,
-        user,
-        password,
-        {},
-      ], this.timeoutMs)) as number;
-
-      if (!uid) {
-        throw new Error(
-          "Authentication failed. Check your ODOO_URL, ODOO_DB, ODOO_USER, and ODOO_PASSWORD."
-        );
-      }
-
-      this.config = { url, db, uid, password };
-    } else {
-      throw new Error(
-        "Either ODOO_API_KEY or ODOO_USER + ODOO_PASSWORD must be provided."
+    if (!uid) {
+      const credentialVar = usingApiKey ? "ODOO_API_KEY" : "ODOO_PASSWORD";
+      throw new AuthenticationError(
+        `Odoo ha rechazado las credenciales del usuario "${user}" en la base de datos "${db}". ` +
+          `Revisa ODOO_URL, ODOO_DB, ODOO_USER y ${credentialVar}. ` +
+          "ODOO_USER debe ser el login del usuario (normalmente su email), no su nombre visible."
       );
     }
+
+    this.config = { url, db, uid, password: secret };
   }
 
   getUid(): number {
-    if (!this.config) throw new Error("Not connected. Call connect() first.");
-    return this.config.uid;
+    return this.uid;
   }
 
   getDatabase(): string {

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
 function stripHtml(html: string): string {
   return html
@@ -17,7 +19,7 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-export const getMessagesTool = {
+export const getMessagesTool: ToolDefinition = {
   name: "get_messages",
   description:
     "Get chatter messages and change history for a specific record. Returns comments, internal notes, and tracking changes.",
@@ -49,8 +51,9 @@ export const getMessagesTool = {
 
 export async function handleGetMessages(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   const resId = args.res_id as number;
   const limit = (args.limit as number) ?? 20;
@@ -104,7 +107,7 @@ export async function handleGetMessages(
   };
 }
 
-export const postMessageTool = {
+export const postMessageTool: ToolDefinition = {
   name: "post_message",
   description:
     "Post a message or internal note on an Odoo record's chatter. Uses the message_post method.",
@@ -131,8 +134,9 @@ export const postMessageTool = {
 
 export async function handlePostMessage(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   const resId = args.res_id as number;
   const body = args.body as string;

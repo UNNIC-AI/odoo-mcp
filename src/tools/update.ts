@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
-export const updateRecordTool = {
+export const updateRecordTool: ToolDefinition = {
   name: "update_record",
   description: "Update one or more existing records in an Odoo model.",
   inputSchema: {
@@ -15,8 +17,9 @@ export const updateRecordTool = {
 
 export async function handleUpdateRecord(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   const rawIds = (args.ids as string).split(",").map((id) => id.trim());
   const ids = rawIds.map((id) => {
@@ -31,7 +34,7 @@ export async function handleUpdateRecord(
     values = JSON.parse(args.values as string);
   } catch {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "values JSON 파싱 실패. 올바른 JSON을 입력하세요" }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "Could not parse 'values'. It must be valid JSON." }, null, 2) }],
       isError: true,
     };
   }

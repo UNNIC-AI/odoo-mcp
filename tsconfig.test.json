@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    // La comprobación abarca también test/ y los ficheros de configuración,
+    // que quedan fuera del rootDir de compilación.
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "test/**/*", "vitest.config.ts", "tsup.config.ts"]
+}

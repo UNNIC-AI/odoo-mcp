@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
-export const readRecordTool = {
+export const readRecordTool: ToolDefinition = {
   name: "read_record",
   description: "Read one or more records by their IDs from an Odoo model.",
   inputSchema: {
@@ -16,8 +18,9 @@ export const readRecordTool = {
 
 export async function handleReadRecord(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const model = args.model as string;
   const rawIds = (args.ids as string).split(",").map((id) => id.trim());
   const ids = rawIds.map((id) => {

@@ -1,50 +1,57 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
+import type { ToolDefinition, ToolResult } from "./types.js";
+import type { AccessPolicy } from "../access.js";
 
-export const searchCalendarTool = {
+const DEFAULT_FIELDS =
+  "name,start,stop,allday,user_id,partner_ids,location,description";
+
+export const searchCalendarTool: ToolDefinition = {
   name: "search_calendar",
   description:
-    "캘린더 일정을 조회합니다. 기본적으로 현재 인증된 사용자 본인의 일정 및 본인이 참석자로 포함된 일정만 반환합니다. all_events를 true로 설정하면 전체 일정을 조회할 수 있습니다.",
+    "Read calendar events. By default returns only events belonging to the authenticated user — those they organise plus those they attend. Set all_events to true to search every user's events.",
   inputSchema: {
     all_events: z
       .boolean()
       .optional()
       .describe(
-        "true로 설정하면 모든 사용자의 일정을 조회합니다. 기본값: false (본인 일정만)"
+        "If true, search events of all users instead of only the authenticated user's. Default: false"
       ),
     domain: z
       .string()
       .optional()
       .describe(
-        '추가 필터 도메인 (JSON 배열). 예: \'[["start",">=","2026-03-01"]]\'. 기본 사용자 필터와 AND로 결합됩니다'
+        'Extra filter as a JSON array, e.g. \'[["start",">=","2026-03-01"]]\'. It is ANDed with the default user filter'
       ),
     fields: z
       .string()
       .optional()
       .describe(
-        '조회할 필드 (쉼표 구분). 기본값: "name,start,stop,allday,user_id,partner_ids,location,description"'
+        `Comma-separated field names to return. Default: "${DEFAULT_FIELDS}"`
       ),
     limit: z
       .number()
+      .int()
+      .positive()
       .optional()
-      .describe("최대 조회 건수. 기본값: 40"),
+      .describe("Maximum number of events to return. Default: 40"),
     order: z
       .string()
       .optional()
-      .describe('정렬 순서. 기본값: "start asc"'),
+      .describe('Sort order. Default: "start asc"'),
   },
 };
 
 export async function handleSearchCalendar(
   client: OdooClient,
-  args: Record<string, unknown>
-) {
+  args: Record<string, unknown>,
+  _policy?: AccessPolicy
+): Promise<ToolResult> {
   const allEvents = (args.all_events as boolean) ?? false;
-  const defaultFields = "name,start,stop,allday,user_id,partner_ids,location,description";
   const fields = args.fields
     ? (args.fields as string).split(",").map((f) => f.trim())
-    : defaultFields.split(",");
+    : DEFAULT_FIELDS.split(",");
   const limit = (args.limit as number) ?? 40;
   const order = (args.order as string) || "start asc";
 
@@ -58,7 +65,7 @@ export async function handleSearchCalendar(
           {
             type: "text" as const,
             text: JSON.stringify(
-              { error: "domain JSON 파싱 실패. 올바른 JSON 배열을 입력하세요" },
+              { error: "Could not parse 'domain'. It must be a valid JSON array." },
               null,
               2
             ),
@@ -69,12 +76,12 @@ export async function handleSearchCalendar(
     }
   }
 
-  let domain: OdooDomain = [...extraDomain];
+  const domain: OdooDomain = [...extraDomain];
 
   if (!allEvents) {
     const partnerId = await client.getPartnerId();
     const uid = client.uid;
-    // 주최자(user_id)가 나이거나, 참석자(partner_ids)에 내가 포함된 일정
+    // Eventos donde soy organizador (user_id) o asistente (partner_ids).
     domain.push("|");
     domain.push(["user_id", "=", uid]);
     domain.push(["partner_ids", "in", [partnerId]]);
@@ -96,7 +103,7 @@ export async function handleSearchCalendar(
         text: JSON.stringify(
           {
             count: records.length,
-            filter: allEvents ? "전체 일정" : "내 일정만",
+            filter: allEvents ? "all users" : "authenticated user only",
             records,
           },
           null,
