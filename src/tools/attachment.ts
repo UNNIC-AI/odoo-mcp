@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
-import type { ToolDefinition, ToolResult } from "./types.js";
+import type { ToolDefinition, ToolResult, ToolTextContent } from "./types.js";
+import { UTC_DOMAIN_HINT } from "./types.js";
 import { isModelAllowed, OPEN_POLICY, type AccessPolicy } from "../access.js";
 
 export const listAttachmentsTool: ToolDefinition = {
@@ -23,7 +24,7 @@ export const listAttachmentsTool: ToolDefinition = {
       .string()
       .optional()
       .describe(
-        'Additional domain filter as JSON array. Default: []'
+        'Additional domain filter as JSON array. Default: []' + UTC_DOMAIN_HINT
       ),
     limit: z
       .number()
@@ -88,22 +89,25 @@ export async function handleListAttachments(
   if (model) domain.push(["res_model", "=", model]);
   if (resId !== undefined) domain.push(["res_id", "=", resId]);
 
-  const attachments = await client.searchRead(
+  const attachments = await client.localizeRecords(
     "ir.attachment",
-    domain,
-    [
-      "name",
-      "mimetype",
-      "file_size",
-      "res_model",
-      "res_id",
-      "create_date",
-      "type",
-      "url",
-    ],
-    limit,
-    undefined,
-    "create_date desc"
+    await client.searchRead(
+      "ir.attachment",
+      domain,
+      [
+        "name",
+        "mimetype",
+        "file_size",
+        "res_model",
+        "res_id",
+        "create_date",
+        "type",
+        "url",
+      ],
+      limit,
+      undefined,
+      "create_date desc"
+    )
   );
 
   return {
@@ -222,7 +226,7 @@ export async function handleUploadAttachment(
 export const downloadAttachmentTool: ToolDefinition = {
   name: "download_attachment",
   description:
-    "Download/read an attachment by ID. Returns the base64-encoded file content.",
+    "Download an attachment by ID. Text files are returned as readable text; images and other binaries are returned as an embedded resource the client can handle, not as base64 in the conversation.",
   inputSchema: {
     id: z.number().describe("Attachment ID to download"),
   },
@@ -230,6 +234,26 @@ export const downloadAttachmentTool: ToolDefinition = {
 
 const MAX_DOWNLOAD_SIZE_MB = 25;
 const MAX_DOWNLOAD_SIZE_BYTES = MAX_DOWNLOAD_SIZE_MB * 1024 * 1024;
+
+/**
+ * Un fichero de texto es más útil como texto: el modelo puede leer un CSV o un
+ * JSON, pero de su base64 no saca nada.
+ */
+const TEXT_MIMETYPES = new Set([
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/x-yaml",
+  "application/yaml",
+  "image/svg+xml",
+]);
+
+function isTextual(mimetype: string): boolean {
+  return mimetype.startsWith("text/") || TEXT_MIMETYPES.has(mimetype);
+}
+
+/** Cuánto texto decodificado admitimos en el contexto del modelo. */
+const MAX_INLINE_TEXT_BYTES = 256 * 1024;
 
 export async function handleDownloadAttachment(
   client: OdooClient,
@@ -324,22 +348,59 @@ export async function handleDownloadAttachment(
   }
 
   const attachment = records[0];
+  const base64 = typeof attachment.datas === "string" ? attachment.datas : "";
+  const mimetype =
+    typeof attachment.mimetype === "string" && attachment.mimetype
+      ? attachment.mimetype
+      : "application/octet-stream";
+  const name = String(attachment.name ?? `adjunto-${id}`);
+  const uri = `odoo://ir.attachment/${id}/${encodeURIComponent(name)}`;
+
+  const summary: ToolTextContent = {
+    type: "text",
+    text: JSON.stringify(
+      {
+        id,
+        name,
+        mimetype,
+        file_size: attachment.file_size,
+        res_model: resModel === false ? null : resModel,
+      },
+      null,
+      2
+    ),
+  };
+
+  // Texto: se devuelve legible para que el modelo pueda trabajar con él.
+  if (isTextual(mimetype) && fileSize <= MAX_INLINE_TEXT_BYTES) {
+    let decoded: string | null = null;
+    try {
+      decoded = Buffer.from(base64, "base64").toString("utf8");
+    } catch {
+      decoded = null;
+    }
+    if (decoded !== null) {
+      return {
+        content: [
+          summary,
+          { type: "resource", resource: { uri, mimeType: mimetype, text: decoded } },
+        ],
+      };
+    }
+  }
+
+  // Imagen: el cliente MCP sabe mostrarla.
+  if (mimetype.startsWith("image/")) {
+    return {
+      content: [summary, { type: "image", data: base64, mimeType: mimetype }],
+    };
+  }
+
+  // Resto: recurso binario incrustado, no base64 suelto en la conversación.
   return {
     content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(
-          {
-            id,
-            name: attachment.name,
-            mimetype: attachment.mimetype,
-            file_size: attachment.file_size,
-            data: attachment.datas,
-          },
-          null,
-          2
-        ),
-      },
+      summary,
+      { type: "resource", resource: { uri, mimeType: mimetype, blob: base64 } },
     ],
   };
 }

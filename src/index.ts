@@ -3,8 +3,7 @@ import { OdooClient, AuthenticationError } from "./odoo-client.js";
 import { ConfigError, describeConfig, loadConfig } from "./config.js";
 import { policyFromConfig } from "./access.js";
 import { createServer } from "./server.js";
-
-const VERSION = "0.1.0";
+import { VERSION } from "./version.js";
 
 /**
  * Este servidor es de un solo usuario: cada persona lo ejecuta en su propio

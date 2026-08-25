@@ -62,6 +62,7 @@ por la ruta local o por Nix:
 | `ODOO_TIMEOUT` | No | Segundos de espera por llamada XML-RPC. Por defecto 30 |
 | `ODOO_READONLY` | No | `true` desactiva todas las herramientas de escritura. Por defecto `false` |
 | `ODOO_ALLOWED_MODELS` | No | Lista blanca de modelos separada por comas. Sin definir, todos |
+| `ODOO_TIMEZONE` | No | Zona IANA para mostrar las fechas. Sin definir, la del usuario en Odoo |
 
 \* Hace falta `ODOO_API_KEY` o `ODOO_PASSWORD`. Si defines las dos, gana la
 clave de API.
@@ -86,6 +87,26 @@ Las dos opciones son una segunda barrera, no la principal: **el límite real son
 los permisos del usuario de Odoo cuyas credenciales uses**. Si no quieres que el
 asistente vea las nóminas, el sitio para arreglarlo es Odoo.
 
+### Fechas y zonas horarias
+
+Odoo guarda los datetime en UTC y los devuelve sin zona (`2026-08-25 08:31:55`).
+Tal cual, el modelo no puede saber que están desfasados respecto a la hora que
+ve el usuario. El servidor los convierte a la zona del usuario y los emite con
+desfase explícito:
+
+```
+"date_order": "2026-08-25T10:31:55+02:00"
+```
+
+Los campos de tipo `date` no llevan hora ni zona y se dejan intactos.
+
+> **Al filtrar, los datetime van en UTC.** Odoo interpreta en UTC los valores
+> que entran en un `domain`, aunque los que salen se muestren en tu zona. Las
+> descripciones de las herramientas ya se lo advierten al modelo.
+
+`ODOO_TIMEZONE` fuerza una zona concreta; sin ella se usa la del usuario en
+Odoo, y UTC si no tiene ninguna.
+
 ## Herramientas
 
 Las 18 herramientas, y si escriben en Odoo:
@@ -100,9 +121,9 @@ Las 18 herramientas, y si escriben en Odoo:
 | `list_models` | | Lista los modelos disponibles |
 | `get_fields` | | Definiciones de campo de un modelo |
 | `whoami` | | Usuario, compañía, versión de servidor y base de datos |
-| `get_messages` | | Mensajes y trazabilidad del chatter de un registro |
+| `get_messages` | | Mensajes del chatter y cambios de campo con su valor anterior y nuevo |
 | `list_attachments` | | Adjuntos de un registro |
-| `download_attachment` | | Descarga un adjunto (base64, máx. 25 MB) |
+| `download_attachment` | | Descarga un adjunto: texto legible, imagen o recurso binario |
 | `search_calendar` | | Eventos de calendario; por defecto solo los tuyos |
 | `create_record` | Sí | Crea uno o varios registros (hasta 100 por llamada) |
 | `update_record` | Sí | Modifica registros existentes |
@@ -114,6 +135,20 @@ Las 18 herramientas, y si escriben en Odoo:
 `execute_method` bloquea `create`, `write`, `unlink`, `copy`, `name_create` y
 `web_save` para que esas operaciones pasen por las herramientas dedicadas, que
 validan la entrada y quedan marcadas como escritura.
+
+Tres detalles del formato de salida que conviene conocer:
+
+- **`download_attachment`** no devuelve base64 dentro del JSON. Un CSV o un
+  JSON llegan como texto legible; una imagen, como bloque de imagen; el resto,
+  como recurso binario incrustado que maneja el cliente MCP sin gastar
+  contexto. Límite de 25 MB, y 256 KB para lo que se decodifica a texto.
+- **`get_messages`** resuelve `tracking_value_ids` en cambios legibles
+  (`{ field, old_value, new_value }`) en vez de devolver ids sueltos, con una
+  sola lectura para todos los mensajes de la página.
+- **`search_grouped`** normaliza el número de registros de cada grupo a
+  `__count`, independientemente del campo por el que se agrupe y de si Odoo usó
+  `read_group` (hasta la 18) o `formatted_read_group` (19 en adelante). La
+  respuesta indica en `odoo_method` cuál se ha usado.
 
 ### Ejemplos
 
@@ -202,6 +237,27 @@ integración hablan con un Odoo real y se ejecutan aparte — ver
 
 Si el handler recibe un argumento llamado `model`, la lista blanca se aplica
 sola: la comprobación vive en `wrapHandler`.
+
+### Compatibilidad entre versiones de Odoo
+
+Odoo renombra campos y métodos entre versiones. En vez de fijar una versión, el
+código pregunta al servidor qué tiene delante:
+
+| Qué cambia | Cómo se resuelve |
+|------------|------------------|
+| `res.users.groups_id` → `group_ids` | `whoami` mira `fields_get` y usa el que exista |
+| `mail.tracking.value`: `field`/`field_desc` → `field_id` | Igual: se piden solo las columnas presentes |
+| `read_group` → `formatted_read_group` (Odoo 19) | Se elige por versión de servidor, con vuelta atrás si falla |
+
+La versión se lee una vez y se cachea, igual que los `fields_get`. Si actualizáis
+Odoo, `npm run test:integration` contra la instancia nueva es la forma rápida de
+comprobar que nada de esto se ha roto.
+
+### La versión del paquete
+
+Sale de `package.json` en tiempo de compilación: `tsup` y `vitest` la inyectan
+con `define` y `src/version.ts` la expone. No hay que tocarla en ningún otro
+sitio, y una prueba comprueba que coinciden.
 
 ### Convenio de idiomas
 

@@ -3,7 +3,7 @@ import { handleSearchGrouped } from "../../../src/tools/group.js";
 import { handleNameSearch } from "../../../src/tools/name-search.js";
 import { handleGetFields } from "../../../src/tools/fields.js";
 import { handleListModels } from "../../../src/tools/models.js";
-import { handleGetMessages, handlePostMessage } from "../../../src/tools/message.js";
+import { handleGetMessages, handlePostMessage, stripHtml } from "../../../src/tools/message.js";
 import { handleSearchCalendar } from "../../../src/tools/calendar.js";
 import { handleWhoami } from "../../../src/tools/whoami.js";
 import { OPEN_POLICY, type AccessPolicy } from "../../../src/access.js";
@@ -13,7 +13,12 @@ describe("search_grouped", () => {
   const base = { model: "sale.order", fields: "amount_total:sum", groupby: "state" };
 
   it("pasa campos y agrupaciones ya troceados", async () => {
-    const { client, lastCall } = fakeClient({ readGroup: async () => [{ state: "sale" }] });
+    const { client, lastCall } = fakeClient({
+      readGroup: async () => ({
+        groups: [{ state: "sale", __count: 3 }],
+        method: "read_group",
+      }),
+    });
 
     await handleSearchGrouped(
       client,
@@ -26,8 +31,25 @@ describe("search_grouped", () => {
     expect(groupby).toEqual(["partner_id", "state"]);
   });
 
+  it("anuncia dónde está el contador y qué método usó Odoo", async () => {
+    const { client } = fakeClient({
+      readGroup: async () => ({
+        groups: [{ state: "sale", __count: 3 }],
+        method: "read_group",
+      }),
+    });
+
+    const payload = payloadOf(await handleSearchGrouped(client, base, OPEN_POLICY));
+
+    expect(payload.count_field).toBe("__count");
+    expect(payload.odoo_method).toBe("read_group");
+    expect(payload.groups[0].__count).toBe(3);
+  });
+
   it("avisa cuando no hay ningún grupo", async () => {
-    const { client } = fakeClient({ readGroup: async () => [] });
+    const { client } = fakeClient({
+      readGroup: async () => ({ groups: [], method: "read_group" }),
+    });
     const payload = payloadOf(await handleSearchGrouped(client, base, OPEN_POLICY));
     expect(payload.group_count).toBe(0);
     expect(payload.message).toMatch(/No groups matched/);
@@ -197,8 +219,33 @@ describe("get_messages / post_message", () => {
     );
 
     // </p> y <br/> generan cada uno un salto, de ahí la línea en blanco.
-    // Solo se decodifican las entidades más comunes: &oacute; sobrevive.
-    expect(payload.messages[0].body).toBe("Hola mundo\n\nAdi&oacute;s & suerte");
+    expect(payload.messages[0].body).toBe("Hola mundo\n\nAdiós & suerte");
+  });
+
+  // Antes solo se decodificaban seis entidades a mano y el resto se colaba
+  // crudo hasta el modelo.
+  it.each([
+    ["&oacute;", "ó"],
+    ["&eacute;", "é"],
+    ["&ntilde;", "ñ"],
+    ["&uuml;", "ü"],
+    ["&#8212;", "—"],
+    ["&#x2014;", "—"],
+    ["&euro;", "€"],
+    ["&hellip;", "…"],
+    ["&laquo;", "«"],
+  ])("decodifica la entidad %s", (entity, expected) => {
+    expect(stripHtml(`<p>${entity}</p>`)).toBe(expected);
+  });
+
+  it("convierte listas y divs en saltos de línea", () => {
+    expect(stripHtml("<ul><li>uno</li><li>dos</li></ul>")).toBe("uno\ndos");
+  });
+
+  it("no deja etiquetas ni espacios sobrantes", () => {
+    expect(stripHtml('<div class="x">  Hola  </div>\n\n\n<p>Adiós</p>')).toBe(
+      "Hola\n\nAdiós"
+    );
   });
 
   it("deja el HTML intacto por defecto", async () => {

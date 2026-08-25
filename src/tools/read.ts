@@ -34,7 +34,10 @@ export async function handleReadRecord(
     ? (args.fields as string).split(",").map((f) => f.trim())
     : undefined;
 
-  const records = await client.read(model, ids, fields);
+  const records = await client.localizeRecords(
+    model,
+    await client.read(model, ids, fields)
+  );
   return {
     content: [
       {

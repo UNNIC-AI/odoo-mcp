@@ -5,7 +5,7 @@ import {
   handleDownloadAttachment,
 } from "../../../src/tools/attachment.js";
 import { OPEN_POLICY, type AccessPolicy } from "../../../src/access.js";
-import { fakeClient, payloadOf } from "../../helpers/fake-client.js";
+import { attachmentsOf, fakeClient, payloadOf } from "../../helpers/fake-client.js";
 
 const RESTRICTED: AccessPolicy = { readonly: false, allowedModels: ["sale.*"] };
 
@@ -48,10 +48,11 @@ describe("list_attachments", () => {
   });
 
   it("sin lista blanca permite buscar en todos los modelos", async () => {
-    const { client, calls } = fakeClient({ searchRead: async () => [] });
+    const { client, callsTo } = fakeClient({ searchRead: async () => [] });
     const result = await handleListAttachments(client, {}, OPEN_POLICY);
     expect(result.isError).toBeUndefined();
-    expect(calls).toHaveLength(1);
+    expect(callsTo("searchRead")).toHaveLength(1);
+    expect(callsTo("searchRead")[0].args[1]).toEqual([]);
   });
 });
 
@@ -132,19 +133,102 @@ describe("download_attachment", () => {
     ...extra,
   });
 
-  it("devuelve el contenido en base64", async () => {
+  const twoStageRead = (extra: Record<string, unknown> = {}) => {
     let call = 0;
-    const { client } = fakeClient({
-      read: async () => {
-        call += 1;
-        return call === 1 ? [meta()] : [{ ...meta(), datas: "SGVsbG8=" }];
+    return async () => {
+      call += 1;
+      const base = meta(extra);
+      return call === 1 ? [base] : [{ ...base, datas: "SGVsbG8=" }];
+    };
+  };
+
+  // Un binario ya no se vuelca como base64 dentro del JSON: va como recurso
+  // incrustado, que es lo que el cliente MCP sabe manejar sin gastar contexto.
+  it("devuelve un binario como recurso incrustado, no como base64 en el texto", async () => {
+    const { client } = fakeClient({ read: twoStageRead() });
+
+    const result = await handleDownloadAttachment(client, { id: 1 }, OPEN_POLICY);
+    const payload = payloadOf(result);
+    const [blocks] = attachmentsOf(result);
+
+    expect(payload.name).toBe("informe.pdf");
+    expect(payload.data).toBeUndefined();
+    expect(blocks).toEqual({
+      type: "resource",
+      resource: {
+        uri: "odoo://ir.attachment/1/informe.pdf",
+        mimeType: "application/pdf",
+        blob: "SGVsbG8=",
       },
     });
+  });
 
-    const payload = payloadOf(await handleDownloadAttachment(client, { id: 1 }, OPEN_POLICY));
+  it("una imagen se devuelve como bloque de imagen", async () => {
+    const { client } = fakeClient({
+      read: twoStageRead({ name: "logo.png", mimetype: "image/png" }),
+    });
 
-    expect(payload.data).toBe("SGVsbG8=");
-    expect(payload.name).toBe("informe.pdf");
+    const result = await handleDownloadAttachment(client, { id: 1 }, OPEN_POLICY);
+
+    expect(attachmentsOf(result)[0]).toEqual({
+      type: "image",
+      data: "SGVsbG8=",
+      mimeType: "image/png",
+    });
+  });
+
+  it("un fichero de texto se devuelve legible, no en base64", async () => {
+    const { client } = fakeClient({
+      read: twoStageRead({ name: "datos.csv", mimetype: "text/csv" }),
+    });
+
+    const result = await handleDownloadAttachment(client, { id: 1 }, OPEN_POLICY);
+    const [block] = attachmentsOf(result);
+
+    expect(block).toMatchObject({
+      type: "resource",
+      resource: { mimeType: "text/csv", text: "Hello" },
+    });
+  });
+
+  it("un texto enorme no se decodifica al contexto", async () => {
+    const { client } = fakeClient({
+      read: twoStageRead({
+        name: "enorme.csv",
+        mimetype: "text/csv",
+        file_size: 512 * 1024,
+      }),
+    });
+
+    const result = await handleDownloadAttachment(client, { id: 1 }, OPEN_POLICY);
+    const [block] = attachmentsOf(result);
+
+    expect(block).toMatchObject({ type: "resource", resource: { blob: "SGVsbG8=" } });
+  });
+
+  it("sin mimetype cae en un binario genérico", async () => {
+    const { client } = fakeClient({
+      read: twoStageRead({ mimetype: false, name: "sin-tipo" }),
+    });
+
+    const result = await handleDownloadAttachment(client, { id: 1 }, OPEN_POLICY);
+
+    expect(attachmentsOf(result)[0]).toMatchObject({
+      resource: { mimeType: "application/octet-stream" },
+    });
+  });
+
+  it("escapa el nombre en el URI del recurso", async () => {
+    const { client } = fakeClient({
+      read: twoStageRead({ name: "informe final (v2).pdf" }),
+    });
+
+    const result = await handleDownloadAttachment(client, { id: 9 }, OPEN_POLICY);
+    const block = attachmentsOf(result)[0] as { resource: { uri: string } };
+
+    expect(block.resource.uri).toBe(
+      "odoo://ir.attachment/9/informe%20final%20(v2).pdf"
+    );
   });
 
   it("consulta primero solo los metadatos", async () => {
@@ -191,13 +275,7 @@ describe("download_attachment", () => {
   });
 
   it("permite un adjunto de un modelo sí permitido", async () => {
-    let call = 0;
-    const { client } = fakeClient({
-      read: async () => {
-        call += 1;
-        return call === 1 ? [meta()] : [{ ...meta(), datas: "SGVsbG8=" }];
-      },
-    });
+    const { client } = fakeClient({ read: twoStageRead() });
 
     const result = await handleDownloadAttachment(client, { id: 1 }, RESTRICTED);
 

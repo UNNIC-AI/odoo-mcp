@@ -1,4 +1,5 @@
 import type { OdooClient } from "../../src/odoo-client.js";
+import type { ToolResult } from "../../src/tools/types.js";
 
 export interface RecordedCall {
   method: string;
@@ -15,11 +16,20 @@ const DEFAULTS: Record<string, Stub | unknown> = {
   update: async () => true,
   delete: async () => true,
   count: async () => 0,
-  readGroup: async () => [],
+  readGroup: async () => ({ groups: [], method: "read_group" }),
   nameSearch: async () => [],
   getFields: async () => ({}),
   executeMethod: async () => true,
-  getVersion: async () => ({ server_version: "18.0" }),
+  getVersion: async () => ({
+    server_version: "18.0",
+    server_version_info: [18, 0, 0, "final", 0, ""],
+  }),
+  getServerMajorVersion: async () => 18,
+  getFieldTypes: async () => ({}),
+  getTimezone: async () => "UTC",
+  // Paso a través por defecto: las pruebas que no van de zonas horarias siguen
+  // comprobando los valores tal y como los devuelve Odoo.
+  localizeRecords: async (_model: string, records: unknown[]) => records,
   getPartnerId: async () => 7,
   getUid: () => 2,
   getDatabase: () => "testdb",
@@ -61,6 +71,13 @@ export function fakeClient(overrides: Record<string, Stub | unknown> = {}) {
 }
 
 /** Extrae el payload JSON del primer bloque de texto de un ToolResult. */
-export function payloadOf(result: { content: { text: string }[] }): any {
-  return JSON.parse(result.content[0].text);
+export function payloadOf(result: ToolResult): any {
+  const block = result.content.find((c) => c.type === "text");
+  if (!block) throw new Error("El ToolResult no tiene ningún bloque de texto");
+  return JSON.parse(block.text);
+}
+
+/** Bloques que no son texto: imagen o recurso incrustado. */
+export function attachmentsOf(result: ToolResult) {
+  return result.content.filter((c) => c.type !== "text");
 }

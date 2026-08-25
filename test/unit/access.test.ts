@@ -79,6 +79,7 @@ describe("policyFromConfig", () => {
       timeoutMs: 30000,
       readonly: true,
       allowedModels: ["sale.*"],
+      timezone: null,
     });
     expect(policy).toEqual({ readonly: true, allowedModels: ["sale.*"] });
   });

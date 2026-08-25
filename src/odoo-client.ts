@@ -1,5 +1,6 @@
 import xmlrpc from "xmlrpc";
 import type { Config } from "./config.js";
+import { isValidTimeZone, localizeRecords } from "./datetime.js";
 import type { OdooConfig, OdooDomain } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -54,6 +55,9 @@ export class OdooClient {
   private objectClient: xmlrpc.Client | null = null;
   private commonClient: xmlrpc.Client | null = null;
   private _partnerId: number | null = null;
+  private _serverMajor: number | null = null;
+  private _timezone: string | null = null;
+  private _fieldTypes = new Map<string, Record<string, string>>();
 
   constructor(params: Config) {
     this.params = params;
@@ -244,6 +248,15 @@ export class OdooClient {
     );
   }
 
+  /**
+   * Agrupación tolerante a la versión de Odoo.
+   *
+   * Hasta Odoo 18 el método público es `read_group`. Odoo 19 lo sustituye por
+   * `formatted_read_group`, con otra firma y otra forma de salida. Elegimos por
+   * versión de servidor y, si el método nuevo no responde, reintentamos con el
+   * viejo. Ambas salidas se normalizan a la misma forma: los valores de
+   * agrupación y agregación tal cual, más `__count` con el número de registros.
+   */
   async readGroup(
     model: string,
     domain: OdooDomain = [],
@@ -252,18 +265,44 @@ export class OdooClient {
     orderby?: string,
     limit?: number,
     lazy?: boolean
-  ): Promise<unknown[]> {
+  ): Promise<{ groups: unknown[]; method: string }> {
+    const major = await this.getServerMajorVersion();
+
+    if (major >= 19) {
+      try {
+        const kwargs: Record<string, unknown> = {
+          groupby,
+          aggregates: fields,
+        };
+        if (orderby) kwargs.order = orderby;
+        if (limit !== undefined) kwargs.limit = limit;
+
+        const raw = (await this.execute(
+          model,
+          "formatted_read_group",
+          [domain],
+          kwargs
+        )) as Record<string, unknown>[];
+
+        return { groups: raw, method: "formatted_read_group" };
+      } catch {
+        // Odoo 19 temprano o un modelo que aún no lo implementa: seguimos abajo.
+      }
+    }
+
     const kwargs: Record<string, unknown> = {};
     if (orderby) kwargs.orderby = orderby;
     if (limit !== undefined) kwargs.limit = limit;
     if (lazy !== undefined) kwargs.lazy = lazy;
 
-    return (await this.execute(
+    const raw = (await this.execute(
       model,
       "read_group",
       [domain, fields, groupby],
       kwargs
-    )) as unknown[];
+    )) as Record<string, unknown>[];
+
+    return { groups: normalizeReadGroup(raw, groupby), method: "read_group" };
   }
 
   async nameSearch(
@@ -290,4 +329,110 @@ export class OdooClient {
 
     return this.execute(model, "fields_get", [], kwargs);
   }
+
+  /** Mayor de la versión del servidor (18 para "18.0"), cacheado. */
+  async getServerMajorVersion(): Promise<number> {
+    if (this._serverMajor !== null) return this._serverMajor;
+    try {
+      const version = await this.getVersion();
+      const info = version.server_version_info;
+      this._serverMajor = Array.isArray(info) ? Number(info[0]) || 0 : 0;
+    } catch {
+      this._serverMajor = 0;
+    }
+    return this._serverMajor;
+  }
+
+  /** Mapa campo → tipo de un modelo, cacheado mientras viva el proceso. */
+  async getFieldTypes(model: string): Promise<Record<string, string>> {
+    const cached = this._fieldTypes.get(model);
+    if (cached) return cached;
+
+    let types: Record<string, string> = {};
+    try {
+      const fields = (await this.getFields(model, ["type"])) as Record<
+        string,
+        { type?: string }
+      >;
+      types = Object.fromEntries(
+        Object.entries(fields).map(([name, def]) => [name, def?.type ?? ""])
+      );
+    } catch {
+      // Sin permisos sobre fields_get seguimos: solo perdemos la conversión.
+      types = {};
+    }
+
+    this._fieldTypes.set(model, types);
+    return types;
+  }
+
+  /**
+   * Zona horaria con la que se presentan los datetime: ODOO_TIMEZONE si está
+   * definida, si no la del usuario en Odoo, y UTC como último recurso.
+   */
+  async getTimezone(): Promise<string> {
+    if (this._timezone) return this._timezone;
+
+    if (this.params.timezone) {
+      this._timezone = this.params.timezone;
+      return this._timezone;
+    }
+
+    try {
+      const users = (await this.read("res.users", [this.uid], [
+        "tz",
+      ])) as Record<string, unknown>[];
+      const tz = users[0]?.tz;
+      this._timezone =
+        typeof tz === "string" && tz && isValidTimeZone(tz) ? tz : "UTC";
+    } catch {
+      this._timezone = "UTC";
+    }
+
+    return this._timezone;
+  }
+
+  /**
+   * Pasa los campos datetime de unos registros a la zona del usuario. Es lo
+   * que usan las herramientas antes de devolver registros al modelo.
+   */
+  async localizeRecords(model: string, records: unknown[]): Promise<unknown[]> {
+    if (records.length === 0) return records;
+    const [fieldTypes, timezone] = await Promise.all([
+      this.getFieldTypes(model),
+      this.getTimezone(),
+    ]);
+    return localizeRecords(records, fieldTypes, timezone);
+  }
+}
+
+/**
+ * read_group devuelve el conteo en `<primer_groupby>_count` y añade `__domain`.
+ * Lo pasamos a `__count` para que la salida no dependa de por qué campo se
+ * agrupe ni de la versión de Odoo.
+ */
+function normalizeReadGroup(
+  groups: Record<string, unknown>[],
+  groupby: string[]
+): Record<string, unknown>[] {
+  // El nombre del contador usa el campo sin el sufijo de granularidad
+  // ("date_order:month" cuenta en "date_order_count").
+  const first = (groupby[0] ?? "").split(":")[0];
+  const counter = first ? `${first}_count` : "";
+
+  return groups.map((group) => {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(group)) {
+      if (key === "__domain" || key === "__range" || key === "__fold") continue;
+      if (counter && key === counter) {
+        out.__count = value;
+        continue;
+      }
+      out[key] = value;
+    }
+    if (!("__count" in out) && typeof group.__count === "number") {
+      out.__count = group.__count;
+    }
+    return out;
+  });
 }

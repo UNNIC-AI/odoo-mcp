@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { UTC_DOMAIN_HINT } from "./types.js";
 import type { AccessPolicy } from "../access.js";
 
 export const countRecordsTool: ToolDefinition = {
@@ -13,7 +14,7 @@ export const countRecordsTool: ToolDefinition = {
       .string()
       .optional()
       .describe(
-        'Search domain as JSON array (e.g., \'[["is_company","=",true]]\'). Default: [] (all records)'
+        'Search domain as JSON array (e.g., \'[["is_company","=",true]]\'). Default: [] (all records)' + UTC_DOMAIN_HINT
       ),
   },
 };

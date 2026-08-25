@@ -22,7 +22,7 @@
 
           src = ./.;
 
-          npmDepsHash = "sha256-AA8z9CjF9wJO6ZaDX3/b6tn/PZbR8hdmW3PQEf4H5bg=";
+          npmDepsHash = "sha256-J/evlW9ak1o9mdjYWm6N9lphKZGFkXRMUaz7dLrgZwM=";
 
           nodejs = pkgs.nodejs_22;
 

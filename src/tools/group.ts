@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { UTC_DOMAIN_HINT } from "./types.js";
 import type { AccessPolicy } from "../access.js";
 
 export const searchGroupedTool: ToolDefinition = {
@@ -14,7 +15,7 @@ export const searchGroupedTool: ToolDefinition = {
       .string()
       .optional()
       .describe(
-        'Search domain as JSON array (e.g., \'[["state","=","posted"]]\'). Default: [] (all records)'
+        'Search domain as JSON array (e.g., \'[["state","=","posted"]]\'). Default: [] (all records)' + UTC_DOMAIN_HINT
       ),
     fields: z
       .string()
@@ -95,7 +96,7 @@ export async function handleSearchGrouped(
   const limit = args.limit as number | undefined;
   const lazy = args.lazy as boolean | undefined;
 
-  const result = await client.readGroup(
+  const { groups, method } = await client.readGroup(
     model,
     domain as OdooDomain,
     fields,
@@ -112,9 +113,13 @@ export async function handleSearchGrouped(
         text: JSON.stringify(
           {
             model,
-            group_count: result.length,
-            ...(result.length === 0 ? { message: "No groups matched the domain." } : {}),
-            groups: result,
+            group_count: groups.length,
+            // El número de registros de cada grupo va siempre en __count, sea
+            // cual sea la versión de Odoo y el campo por el que se agrupe.
+            count_field: "__count",
+            odoo_method: method,
+            ...(groups.length === 0 ? { message: "No groups matched the domain." } : {}),
+            groups,
           },
           null,
           2

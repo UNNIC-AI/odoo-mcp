@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { UTC_DOMAIN_HINT } from "./types.js";
 import type { AccessPolicy } from "../access.js";
 
 export const nameSearchTool: ToolDefinition = {
@@ -17,7 +18,7 @@ export const nameSearchTool: ToolDefinition = {
       .string()
       .optional()
       .describe(
-        'Additional domain filter as JSON array (e.g., \'[["is_company","=",true]]\'). Default: []'
+        'Additional domain filter as JSON array (e.g., \'[["is_company","=",true]]\'). Default: []' + UTC_DOMAIN_HINT
       ),
     operator: z
       .enum(["ilike", "like", "=", "not ilike", "not like", "=like", "=ilike"])

@@ -6,6 +6,8 @@
  * modelo — descripciones de herramientas y resultados — está en inglés.
  */
 
+import { isValidTimeZone } from "./datetime.js";
+
 const DEFAULT_TIMEOUT_MS = 30000;
 
 export interface Config {
@@ -20,6 +22,8 @@ export interface Config {
   readonly: boolean;
   /** null = sin restricción. Lista de patrones, p. ej. ["sale.*", "res.partner"]. */
   allowedModels: string[] | null;
+  /** null = usar la zona horaria del usuario en Odoo. */
+  timezone: string | null;
 }
 
 /** Error de configuración: su mensaje está en español y va dirigido al usuario. */
@@ -58,6 +62,18 @@ function parseAllowedModels(raw: string | undefined): string[] | null {
     );
   }
   return patterns;
+}
+
+function parseTimezone(raw: string | undefined): string | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  const timezone = raw.trim();
+  if (!isValidTimeZone(timezone)) {
+    throw new ConfigError(
+      `ODOO_TIMEZONE no es una zona horaria conocida: "${timezone}". ` +
+        'Usa un identificador IANA, por ejemplo "Europe/Madrid" o "UTC".'
+    );
+  }
+  return timezone;
 }
 
 /**
@@ -113,6 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     timeoutMs: parseTimeout(env.ODOO_TIMEOUT),
     readonly: parseBoolean(env.ODOO_READONLY, "ODOO_READONLY"),
     allowedModels: parseAllowedModels(env.ODOO_ALLOWED_MODELS),
+    timezone: parseTimezone(env.ODOO_TIMEZONE),
   };
 }
 
@@ -128,5 +145,10 @@ export function describeConfig(config: Config): string {
   if (config.allowedModels) {
     lines.push(`Modelos permitidos: ${config.allowedModels.join(", ")}`);
   }
+  lines.push(
+    config.timezone
+      ? `Zona horaria: ${config.timezone} (fijada por ODOO_TIMEZONE)`
+      : "Zona horaria: la del usuario en Odoo"
+  );
   return lines.join("\n");
 }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { UTC_DOMAIN_HINT } from "./types.js";
 import type { AccessPolicy } from "../access.js";
 
 const DEFAULT_FIELDS =
@@ -22,7 +23,7 @@ export const searchCalendarTool: ToolDefinition = {
       .string()
       .optional()
       .describe(
-        'Extra filter as a JSON array, e.g. \'[["start",">=","2026-03-01"]]\'. It is ANDed with the default user filter'
+        'Extra filter as a JSON array, e.g. \'[["start",">=","2026-03-01"]]\'. It is ANDed with the default user filter' + UTC_DOMAIN_HINT
       ),
     fields: z
       .string()
@@ -87,13 +88,9 @@ export async function handleSearchCalendar(
     domain.push(["partner_ids", "in", [partnerId]]);
   }
 
-  const records = await client.searchRead(
+  const records = await client.localizeRecords(
     "calendar.event",
-    domain,
-    fields,
-    limit,
-    undefined,
-    order
+    await client.searchRead("calendar.event", domain, fields, limit, undefined, order)
   );
 
   return {

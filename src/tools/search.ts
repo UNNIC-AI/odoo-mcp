@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { OdooClient } from "../odoo-client.js";
 import type { OdooDomain } from "../types.js";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { UTC_DOMAIN_HINT } from "./types.js";
 import type { AccessPolicy } from "../access.js";
 
 const DEFAULT_FIELDS = ["id", "name", "display_name"];
@@ -16,7 +17,7 @@ export const searchRecordsTool: ToolDefinition = {
       .string()
       .optional()
       .describe(
-        'Search domain as JSON array (e.g., \'[["is_company","=",true],["country_id.code","=","US"]]\'). Default: [] (all records)'
+        'Search domain as JSON array (e.g., \'[["is_company","=",true],["country_id.code","=","US"]]\'). Default: [] (all records)' + UTC_DOMAIN_HINT
       ),
     fields: z
       .string()
@@ -86,6 +87,8 @@ export async function handleSearchRecords(
     hasMore = records.length > limit;
     if (hasMore) records.pop();
   }
+
+  records = await client.localizeRecords(model, records);
 
   return {
     content: [
