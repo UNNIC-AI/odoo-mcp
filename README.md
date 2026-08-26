@@ -20,7 +20,7 @@ cuenta → Nueva clave de API**.
   "mcpServers": {
     "odoo": {
       "command": "npx",
-      "args": ["-y", "odoo-mcp"],
+      "args": ["-y", "git+ssh://git@github.com/unnic-ai/odoo-mcp.git"],
       "env": {
         "ODOO_URL": "https://mi-odoo.com",
         "ODOO_DB": "mi-base-de-datos",
@@ -36,12 +36,18 @@ cuenta → Nueva clave de API**.
 > usuario + credencial: la API key ocupa el sitio de la contraseña, no el del
 > usuario. Sin `ODOO_USER` el servidor no arranca y te lo dice al iniciarse.
 
-Si trabajas desde el repositorio en vez de desde npm, cambia `command` y `args`
-por la ruta local o por Nix:
+> **No hace falta publicar en npm.** `npx` acepta una URL de git: clona el
+> repositorio, ejecuta el script `prepare` (que compila `dist/`) y lanza el
+> binario. Solo necesitas acceso de lectura al repositorio. Para fijar una
+> versión concreta, añade la referencia: `...odoo-mcp.git#v0.1.0`.
+
+Si prefieres no depender de la red en cada arranque, apunta al repositorio
+local o a Nix:
 
 ```json
 "command": "node",  "args": ["/ruta/al/repo/dist/index.js"]
 "command": "nix",   "args": ["run", "/ruta/al/repo", "--"]
+"command": "nix",   "args": ["run", "git+ssh://git@github.com/unnic-ai/odoo-mcp.git", "--"]
 ```
 
 ### 3. Pregunta
