@@ -38,16 +38,70 @@ cuenta → Nueva clave de API**.
 
 > **No hace falta publicar en npm.** `npx` acepta una URL de git: clona el
 > repositorio, ejecuta el script `prepare` (que compila `dist/`) y lanza el
-> binario. Solo necesitas acceso de lectura al repositorio. Para fijar una
-> versión concreta, añade la referencia: `...odoo-mcp.git#v0.1.0`.
+> binario. Solo necesitas acceso de lectura al repositorio.
+
+Ese JSON va donde lo guarde tu cliente: `.mcp.json` en la raíz del proyecto
+(Claude Code), `claude_desktop_config.json` (Claude Desktop), o el ajuste
+equivalente de tu editor.
 
 Si prefieres no depender de la red en cada arranque, apunta al repositorio
-local o a Nix:
+local o a Nix. Es el mismo bloque cambiando `command` y `args`.
+
+**Repositorio local ya compilado** (`npm install && npm run build` antes):
 
 ```json
-"command": "node",  "args": ["/ruta/al/repo/dist/index.js"]
-"command": "nix",   "args": ["run", "/ruta/al/repo", "--"]
-"command": "nix",   "args": ["run", "git+ssh://git@github.com/unnic-ai/odoo-mcp.git", "--"]
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "node",
+      "args": ["/ruta/al/repo/dist/index.js"],
+      "env": {
+        "ODOO_URL": "https://mi-odoo.com",
+        "ODOO_DB": "mi-base-de-datos",
+        "ODOO_USER": "yo@empresa.com",
+        "ODOO_API_KEY": "mi-api-key"
+      }
+    }
+  }
+}
+```
+
+**Nix, desde el repositorio local** (compila solo cuando cambia el código):
+
+```json
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "nix",
+      "args": ["run", "/ruta/al/repo", "--"],
+      "env": {
+        "ODOO_URL": "https://mi-odoo.com",
+        "ODOO_DB": "mi-base-de-datos",
+        "ODOO_USER": "yo@empresa.com",
+        "ODOO_API_KEY": "mi-api-key"
+      }
+    }
+  }
+}
+```
+
+**Nix, directamente desde git:**
+
+```json
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "nix",
+      "args": ["run", "git+ssh://git@github.com/unnic-ai/odoo-mcp.git", "--"],
+      "env": {
+        "ODOO_URL": "https://mi-odoo.com",
+        "ODOO_DB": "mi-base-de-datos",
+        "ODOO_USER": "yo@empresa.com",
+        "ODOO_API_KEY": "mi-api-key"
+      }
+    }
+  }
+}
 ```
 
 ### 3. Pregunta

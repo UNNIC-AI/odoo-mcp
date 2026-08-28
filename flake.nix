@@ -38,7 +38,7 @@
 
           meta = {
             description = "MCP server for Odoo ERP over XML-RPC";
-            homepage = "https://github.com/intellieffect/odoo-mcp";
+            homepage = "https://github.com/unnic-ai/odoo-mcp";
             license = pkgs.lib.licenses.mit;
             mainProgram = "odoo-mcp";
           };
