@@ -1,4 +1,5 @@
 # odoo-mcp
+laksjdf
 
 Servidor MCP (Model Context Protocol) para Odoo. Conecta cualquier asistente de
 IA a tu instancia de Odoo por XML-RPC estándar — sin instalar ningún módulo.
