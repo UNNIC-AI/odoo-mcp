@@ -20,7 +20,7 @@ cuenta → Nueva clave de API**.
   "mcpServers": {
     "odoo": {
       "command": "npx",
-      "args": ["-y", "git+ssh://git@github.com/unnic-ai/odoo-mcp.git"],
+      "args": ["-y", "git+https://github.com/unnic-ai/odoo-mcp.git"],
       "env": {
         "ODOO_URL": "https://mi-odoo.com",
         "ODOO_DB": "mi-base-de-datos",
@@ -92,7 +92,7 @@ local o a Nix. Es el mismo bloque cambiando `command` y `args`.
   "mcpServers": {
     "odoo": {
       "command": "nix",
-      "args": ["run", "git+ssh://git@github.com/unnic-ai/odoo-mcp.git", "--"],
+      "args": ["run", "git+https://github.com/unnic-ai/odoo-mcp.git", "--"],
       "env": {
         "ODOO_URL": "https://mi-odoo.com",
         "ODOO_DB": "mi-base-de-datos",
